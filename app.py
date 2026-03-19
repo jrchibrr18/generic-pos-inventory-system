@@ -1,30 +1,25 @@
 """Flask application factory for POS System."""
 import os
 import sys
-
-from flask import Flask
+from flask import Flask, redirect
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
+from sqlalchemy import text
 
 from config import config
 from models import db, User
 
-
 def _resource_path(relative_path):
-    """Resolve path for PyInstaller bundle or development."""
     if getattr(sys, 'frozen', False):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
-
 def create_app(config_name='default'):
-    """Create and configure Flask application."""
     app = Flask(__name__,
                 template_folder=_resource_path('templates'),
                 static_folder=_resource_path('static'))
-    app.config.from_object(config[config_name])
     
-    # Security: Limit upload size to 16MB for Excel imports
+    app.config.from_object(config[config_name])
     app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 
     
     CSRFProtect(app)
@@ -33,8 +28,6 @@ def create_app(config_name='default'):
     login_manager = LoginManager()
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
-    login_manager.login_message = 'Please log in to access this page.'
-    login_manager.login_message_category = 'info'
     
     @login_manager.user_loader
     def load_user(user_id):
@@ -57,47 +50,41 @@ def create_app(config_name='default'):
     
     @app.route('/')
     def index():
-        from flask import redirect
-        # Check if setup is needed
         try:
             if not User.query.first():
                 return redirect('/auth/setup')
         except Exception:
-            # Handle cases where DB is not yet initialized
             pass
         return redirect('/dashboard')
-    
-    # Create tables and run migrations
+
+    # Database setup and migrations
     with app.app_context():
         db.create_all()
         
-        # Migration logic for existing installations
-        try:
-            from sqlalchemy import text
-            # 1. Add cost_price to sales_items (Essential for the Profit Report)
-            result = db.session.execute(text("PRAGMA table_info(sales_items)"))
-            cols = [r[1] for r in result]
-            if 'cost_price' not in cols:
-                db.session.execute(text("ALTER TABLE sales_items ADD COLUMN cost_price NUMERIC(12,2) DEFAULT 0"))
-                db.session.commit()
-            
-            # 2. Migration: Ensure products table has expiry_date if mentioned in templates
-            result_prod = db.session.execute(text("PRAGMA table_info(products)"))
-            prod_cols = [r[1] for r in result_prod]
-            if 'expiry_date' not in prod_cols:
-                db.session.execute(text("ALTER TABLE products ADD COLUMN expiry_date DATE"))
-                db.session.commit()
+        # Only run SQLite PRAGMA migrations if we are on SQLite
+        if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
+            try:
+                # Add cost_price to sales_items
+                result = db.session.execute(text("PRAGMA table_info(sales_items)"))
+                cols = [r[1] for r in result]
+                if 'cost_price' not in cols:
+                    db.session.execute(text("ALTER TABLE sales_items ADD COLUMN cost_price NUMERIC(12,2) DEFAULT 0"))
                 
-        except Exception as e:
-            print(f"Migration error: {e}")
-            db.session.rollback()
+                # Add expiry_date to products
+                result_prod = db.session.execute(text("PRAGMA table_info(products)"))
+                prod_cols = [r[1] for r in result_prod]
+                if 'expiry_date' not in prod_cols:
+                    db.session.execute(text("ALTER TABLE products ADD COLUMN expiry_date DATE"))
+                
+                db.session.commit()
+            except Exception as e:
+                print(f"SQLite Migration skipped: {e}")
+                db.session.rollback()
+        else:
+            print("PostgreSQL detected: Skipping SQLite migrations.")
     
-    # Inject POS name and current summary into all templates
     @app.context_processor
     def inject_globals():
-        return {
-            'pos_name': app.config.get('POS_NAME', 'POS System'),
-            # You can inject simple summary data here if needed by base.html
-        }
+        return {'pos_name': app.config.get('POS_NAME', 'POS System')}
     
     return app
