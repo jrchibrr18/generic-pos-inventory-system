@@ -19,4 +19,5 @@ reportlab==4.0.7
 
 # Utilities
 python-dotenv==1.0.0
-gunicorn
+
+gunicorn==25.1.0
