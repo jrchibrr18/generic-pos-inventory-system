@@ -20,5 +20,7 @@ reportlab==4.0.7
 
 # Utilities
 python-dotenv==1.0.0
-
 gunicorn==25.1.0
+
+pandas==2.2.0
+numpy==1.26.4
